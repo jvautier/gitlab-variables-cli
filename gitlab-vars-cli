@@ -1,0 +1,133 @@
+#!/usr/bin/env python3
+
+import argparse
+import inspect
+import json
+import sys
+import os
+# import gitlab
+import requests
+import traceback
+import subprocess
+
+import giturlparse
+import urllib
+
+    
+
+class GitlabCli():
+    def __init__(self, host_url, api_key="", **kwargs):
+        
+        self._host_url = host_url
+        self._api_key = api_key
+    
+    def add_metadata(self, list, data, **kwargs):
+        for i in list: 
+            i.update(data) 
+
+    def get_group_vars(self, group_id, **kwargs):
+        group = self.request('GET', '/groups/' + str(group_id), **kwargs).json()
+        groups_variables_req = self.request('GET', '/groups/' + str(group_id) + '/variables', **kwargs)
+        groups_variables = []
+        if groups_variables_req.status_code == 200:
+            groups_variables = groups_variables_req.json()
+        
+        self.add_metadata(groups_variables, {'group_id':group_id, 'path': group.get('full_path')})
+        if group.get('parent_id'):
+            parent_variables = self.get_group_vars(group.get('parent_id'))
+            groups_variables = groups_variables + parent_variables
+        return groups_variables
+
+    def get_project_vars(self, project_id, **kwargs):
+        project_req = self.request('GET', '/projects/' + str(project_id), **kwargs)
+        project_req.raise_for_status()
+        project = project_req.json()
+        project_variables_req = self.request('GET', '/projects/'+str(project_id)+'/variables', **kwargs)
+        project_variables = []
+        project_variables = project_variables_req.json()
+
+        self.add_metadata(project_variables, {'project_id':project_id, 'path': project.get('path_with_namespace')})
+        if project.get('namespace').get('id'):
+            groups_variables = self.get_group_vars( project.get('namespace').get('id'), **kwargs )
+            project_variables = project_variables + groups_variables
+        return project_variables
+        
+    def request(self, method, url, **kwargs):
+        request_parameters = {}
+        request_parameters['url'] = self._host_url + '/api/v4' + url.replace('//', '/')
+        request_parameters['url'] = request_parameters['url'].format(**kwargs)
+        request_parameters['headers'] = {
+            'Accept': 'application/json',
+            'Content-type': 'application/json',
+            'PRIVATE-TOKEN': self._api_key
+            }
+        request_parameters['data']=kwargs.get('data', None)
+        request_parameters['json']=kwargs.get('json', None)
+        request_parameters['timeout']=kwargs.get('timeout', 30.0)
+
+        # print(request_parameters['url'])
+
+        return requests.request(
+            method=method,
+            **request_parameters
+        )
+
+class GitlabVarsCtl():
+    
+    def call(self, **kwargs):
+        
+        if kwargs.get('project_id', None) == None:
+            remote_url = subprocess.check_output(['git', 'config', 'remote.origin.url']).strip().decode()
+            p = giturlparse.parse(remote_url)
+            kwargs['project_id'] = "{0}/{1}".format(p.owner, p.name)
+            kwargs['base_url'] = "https://" + p.resource
+        
+        kwargs['project_id'] = urllib.parse.quote(kwargs.get('project_id', ''), safe='')
+
+        cli = GitlabCli(kwargs.get('base_url'),kwargs.get('private_token'))
+        res = cli.get_project_vars(**kwargs)
+        ret = {}
+        if kwargs.get('format') == "json":
+            ret = json.dumps(res, indent=2)
+        if kwargs.get('format') == "export":
+            str = ""
+            for item in res:
+                str += "export {0}=\"{1}\"\n".format(item.get('key'), item.get('value'))
+            ret = str    
+        return ret
+
+    def parse(self):
+        self._parser = parser = argparse.ArgumentParser(description='gitlab api ctl')
+        parser.add_argument(
+            "--format",
+            default="json",
+            dest="format")
+        parser.add_argument(
+            "--base-url",
+            default=os.environ.get('GITLAB_BASE_URL', None),
+            help="gitlab's url",
+            dest="base_url")
+        parser.add_argument(
+            "--private-token",
+            default=os.environ.get('GITLAB_API_TOKEN', None),
+            help="gitlab's private api token",
+            dest="private_token")
+        parser.add_argument(
+            "--project-id",
+            required=False)    
+        # parser.set_defaults(current_parser='_parser')
+        # parser.add_argument('project_id', help='project id', required=False)
+        
+        args = parser.parse_args()
+        args_for_func = vars(args)
+        result = self.call(**args_for_func)
+        
+        print(result)
+
+
+def main():
+    ctl = GitlabVarsCtl()
+    ctl.parse()
+
+if __name__ == '__main__':
+    main()
