@@ -1,4 +1,5 @@
 ---
+# See https://github.com/jvautier/project-cli
 fullname: jvautier/gitlab-variables-cli
 description: gitlab cli to fetch gitlab ci variables
 tags:
