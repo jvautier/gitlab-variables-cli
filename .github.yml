@@ -1,0 +1,9 @@
+---
+fullname: jvautier/gitlab-variables-cli
+description: gitlab cli to fetch gitlab ci variables
+tags:
+  - python
+  - cli
+  - gitlab
+  - api
+github: {}
